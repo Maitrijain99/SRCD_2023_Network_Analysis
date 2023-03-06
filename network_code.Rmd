@@ -1,0 +1,168 @@
+---
+title: "2.covariance_matrix"
+author: "Maitri Jain"
+date: '2022-06-27'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Library and environment
+```{r}
+library(tidyverse)
+library(qgraph)
+library(psych)
+library(bootnet)
+library(NetworkComparisonTest)
+library(RColorBrewer)
+
+df = read.csv("../data/df_standardized.csv")
+
+df = df %>% mutate(
+  SubID = as.character(SubID),
+  RelStatus_chr = as.factor(RelStatus_chr),
+  Married = as.factor(Married),
+  parentGender_chr = as.factor(parentGender_chr),
+  ParentRace_string = as.factor(ParentRace_string),
+  ChildRace_string = as.factor(ChildRace_string),
+  childGender_chr = as.factor(childGender_chr),
+  PHQ9_severity = as.factor(PHQ9_severity),
+  GAD_severity = as.factor(GAD_severity)
+)
+
+
+```
+
+
+# individual symptoms, brief total scales
+
+## subsetting variables which will be in network analysis
+```{r}
+df_network = df %>% select(contains("PHQ"), contains("GAD"), BRIEFP_ISCI, BRIEFP_FI, BRIEFP_EMI) %>% select(-c(PHQ_Functioning, PHQ9_NumMissing, PHQ9_severity, GAD_Functioning, GAD_NumMissing, GAD_severity, PHQ9_total, GAD_total))
+
+```
+
+## network analysis
+```{r}
+
+#correlation matrix
+cors = cor_auto(df_network, missing = 'fiml')
+
+#group names
+variables <- rep(c('PHQ', 'GAD', 'BRIEF'),
+              times = c(9, 7, 3))
+
+Labels <- c("Anhedonia", "Depression", "Sleep", "Fatigue", "Appetite", "Self-esteem", "Concentration", "Psychomotor", "Self-harm", "Nervous", "Continuing\nworries", "Too\nworried", "Unrelaxed", "Restless", "Irritable", "Afraid", "Inhibition", "Flexibility", "EMI")
+Names <- c("Anhedonia", "Depressed Mood", "Sleep", "Fatigue", "Appetitie", "Low self-esteem", "Trouble concentrating", "Psychomotor agitation/retardation", "Suicide/self-harm", "Nervousness", "Uncontrollable worries", "Excessive worries", "Trouble relaxing", "Restlessness", "Irritability", "Afraid", "Inhibition", "Flexibility", "Emerging metacognition")
+
+# plotting network
+qgraph(cors, layout = "spring", graph = "glasso",sampleSize = 437, groups = variables, threshold = TRUE, legend = FALSE, labels = Labels, label.cex = 2, label.scale.equal = TRUE, shape = "diamond", vsize = 10, bg = "darkolivegreen3", color = c("skyblue", "pink", "orange"), posCol = "black", negCol = "red", edge.width = 1)
+
+# getting network stats
+stats = centrality(plot1, alpha = 1, posfun = abs, pkg = 'igraph', all.shortest.paths = FALSE,
+weighted = TRUE, signed = TRUE, R2 = TRUE)
+
+# plotting network stats
+cenplot = centralityPlot(plot1, scale = c("z-scores"),
+include =c("all"), theme_bw = TRUE, print = TRUE, verbose = TRUE, weighted = TRUE,signed = TRUE,
+orderBy = "default", decreasing = FALSE)
+
+centrality <- centralityTable(plot1)
+
+write.csv(centrality, "centrality_indices.csv")
+indices_table = read.csv("centrality_indices.csv")
+
+
+
+somplot = ggplot(indices_table, aes(x = node, y = value, linetype = measure, color = measure)) +
+  geom_point() +
+  geom_line(aes(group = measure)) +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 30, vjust = 0.9, hjust=1), legend.position = "top") +
+  ylab("Standardized Value") +
+  xlab("Node") +
+  labs(color='Centrality Index', linetype = 'Centrality Index') 
+somplot
+
+
+```
+
+## network stability
+```{r}
+
+Labels <- c("Anhedonia", "Depression", "Sleep", "Fatigue", "Appetite", "Self-esteem", "Concentration", "Psychomotor", "Self-harm", "Nervous", "Continuing\nworries", "Too\nworried", "Unrelaxed", "Restless", "Irritable", "Afraid", "Inhibition", "Flexibility", "EMI")
+
+df_network = df_network %>% 
+  rename(.,
+    Anhedonia = PHQ_1,
+    Depression = PHQ_2,
+    Sleep = PHQ_3,
+    Fatigue = PHQ_4,
+    Appetite = PHQ_5,
+    `Self-esteem` = PHQ_6,
+    Concentration = PHQ_7,
+    Psychomotor = PHQ_8,
+    `Self-harm` = PHQ_9,
+    Nervous = GAD_1,
+    `Continuing worries` = GAD_2,
+    `Too worried` = GAD_3,
+    Unrelaxed = GAD_4,
+    Restless = GAD_5,
+    Irritable = GAD_6,
+    Afraid = GAD_7,
+    Inhibition = BRIEFP_ISCI,
+    Flexibility = BRIEFP_FI,
+    EMI = BRIEFP_EMI
+    )
+
+GGM_net <- estimateNetwork(df_network, default = "EBICglasso", corMethod = "cor_auto",
+missing = "fiml")
+
+#non-parametric bootstrap
+#-> for edge stability and edge as well as centrality difference tests
+#run bootstrap
+set.seed(293)
+boot1 <- bootnet(GGM_net, default = 'EBICglasso', statistics = c("edge","Strength","Closeness"),
+nboots = 1000, nCores = 3, type = "nonparametric")
+save(boot1, file = "boot_edges_final.RData") #save results
+load("boot_edges_final.RData")
+
+
+plot = plot(boot1, statistics = c("edge"), order = 'sample') 
+plot2 = plot(boot1, statistics = c("strength"), labels = TRUE, xlabs = Labels)
+plot(boot1, plot = "difference",onlyNonZero = TRUE, order = "sample")
+
+#case-dropping bootstrap
+#-> for centrality stability
+#run bootstrap
+set.seed(293)
+boot2 <- bootnet(GGM_net, statistics = c("Strength","Closeness"),
+nboots = 1000, nCores = 2, type = "case")
+save(boot2, file = "boot_centrality_final.RData") #save results
+
+
+plot3 = plot(boot2, statistics = c( "all"))
+plot3
+corStability(boot2)
+
+library(cowplot)
+plotssss = plot_grid(plot1, somplot, labels = 'AUTO')
+```
+
+## bootstrapped network 
+```{r}
+#bootinclude
+
+bootgraph = bootInclude(boot1, verbose = TRUE)
+som = bootgraph$graph
+plotinclude = plot(bootgraph, label.cex = 2, groups = variables)
+plot(bootgraph, groups = variables, legend = FALSE, labels = Labels, label.cex = 3.5, label.scale.equal = TRUE, shape = "square", vsize = 9, bg = "white", color = c("skyblue", "pink", "orange"), posCol = "black", negCol = "red", edge.width = 0.4)
+
+#bootthreshhold
+bootgraph2 = bootThreshold(boot1, alpha = 0.05, verbose = TRUE, thresholdIntercepts = FALSE)
+plot(bootgraph2, label.cex = 2, palette = 'pastel')
+
+```
+
