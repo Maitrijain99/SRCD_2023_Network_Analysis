@@ -32,6 +32,8 @@ df = df %>% mutate(
   GAD_severity = as.factor(GAD_severity)
 )
 
+df = df %>% filter(childAge >= 2) %>% filter(ParentAge > 18)
+
 
 ```
 
